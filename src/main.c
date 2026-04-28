@@ -22,11 +22,22 @@ typedef enum {
 } options_t;
 
 
+unsigned char flip_bit(unsigned char c, int k) {
+    return c & (1 << k);
+}
+
+
+
 void mutate(unsigned char *buf, size_t len) {
-    int mutations = rand() % 100 + 1;
+    int mutations = rand() % 0x1000 + 1;
     for (int i = 0; i < mutations; i++) {
+        // XOR
         int idx = rand() % len;
         buf[idx] ^= (rand() % 256);
+        // flip all bits
+        idx = rand() & len;
+        flip_bit(buf[idx], rand() % 0x100);
+        // 
     }
 }
 
@@ -50,15 +61,16 @@ void *run_target(void* optionss) {
     int status;
     waitpid(pid, &status, 0);
     if (WIFSIGNALED(status)) {
+        puts("CRASHED");
         int sig = WTERMSIG(status);
         if (sig == 11) printf("SIGSEGV\n");
         else if (sig == 6) puts("ABORTED");
-            
-        
+                    
         char cmd[0x100];
         sprintf(cmd, "cp %s crashes/crash_%ld", MUTATED_OUTPUT, time(NULL));
         system(cmd);
-    }    
+    }
+
 }
 
 char *pick_random_seed(const char *path) {
@@ -86,32 +98,12 @@ char *pick_random_seed(const char *path) {
     for (int i = 0; i < count; i++) {
         free(files[i]);
     }
-
     closedir(corpus_folder);
-
     return seed;
-
 }
 
 
 int main(int argc, char** argv) {
-
-
-    /*ASAN_OPTIONS=abort_on_error=1 ./bsdtar <options> .... 
-    execve()
-    
-    mutation based fuzzer
-
-    1) mutation engine (mutate archives (zip, tar.gz, tar, tar.gx....))
-    2) generate malformed archive files
-    3) detect crashes
-    
-
-    picks a seed archive from the corpus "corpus/"
-    mutate archive (flip bits/bytes)
-    run execve(asan, [program], [NULL]);
-    detect a crash and report it and store/save the seed "crashes"
-    */ 
     pthread_t extract_pt;
     pthread_t list_pt;
     pthread_t add_pt;
@@ -122,8 +114,11 @@ int main(int argc, char** argv) {
     srand(time(NULL));
     system("mkdir -p out");
     char *seed;
+    int i = 0;
     while (1) {
-        seed = pick_random_seed("corpus");
+        if (i == 0) seed = pick_random_seed("corpus");
+        else if (i == 0x200) i = 0;
+        i++;
         FILE *fp = fopen(seed, "rb");
         if (!fp) {
             //
@@ -148,10 +143,15 @@ int main(int argc, char** argv) {
 
         // implement threads (run using all options)
         // list |  pthread_create(&thread1, NULL, foo, NULL);
-        pthread_create(&list_pt, NULL, run_target, LIST);
-        pthread_create(&create_pt, NULL, run_target, CREATE);
-        pthread_create(&extract_pt, NULL, run_target, EXTRACT);
-        pthread_create(&add_pt, NULL, run_target, ADD);
+        pthread_create(&list_pt, NULL, run_target, (void*)LIST);
+        pthread_create(&create_pt, NULL, run_target, (void*)CREATE);
+        pthread_create(&extract_pt, NULL, run_target, (void*)EXTRACT);
+        pthread_create(&add_pt, NULL, run_target, (void*)ADD);
+
+        pthread_join(list_pt, NULL);
+        pthread_join(create_pt, NULL);
+        pthread_join(extract_pt, NULL);
+        pthread_join(add_pt, NULL);       
     }
 
 
